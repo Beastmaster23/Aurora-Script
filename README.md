@@ -1,6 +1,6 @@
 [![MIT License](https://img.shields.io/apm/l/atomic-design-ui.svg?)](https://github.com/Beastmaster23/)
-[![Hackage-Deps](https://img.shields.io/hackage-deps/v/schedule?label=schedule)]()
-[![Hackage-Deps](https://img.shields.io/hackage-deps/v/progress?label=progress)]()
+[![Hackage-Deps](https://img.shields.io/hackage-deps/v/schedule?label=schedule)](https://github.com/Beastmaster23/)
+[![Hackage-Deps](https://img.shields.io/hackage-deps/v/progress?label=progress)](https://github.com/Beastmaster23/)
 # Aurora Scripts
 
 This program will backup files on a weekly at a certain day and time.
