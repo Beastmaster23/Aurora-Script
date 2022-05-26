@@ -1,2 +1,4 @@
 #Ignore python cache folders
 __pycache__
+logs
+.pnpm-debug.log
