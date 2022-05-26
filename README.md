@@ -37,13 +37,13 @@ Install Aurora script
 Clone the project
 
 ```bash
-  git clone https://link-to-project
+  git clone https://github.com/Beastmaster23/Aurora-Script.git
 ```
 
 Go to the project directory
 
 ```bash
-  cd my-project
+  cd Aurora-Script
 ```
 
 Install dependencies
