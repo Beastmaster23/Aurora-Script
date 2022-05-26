@@ -2,6 +2,7 @@ from enum import Enum
 import os
 import shutil
 import time
+import signal
 from typing import Callable
 from progress.bar import IncrementalBar
 import schedule
@@ -10,7 +11,13 @@ import configparser
 from logging.handlers import RotatingFileHandler
 # 500 MB
 max_bytes=500*1024*1024
-logging.basicConfig(handlers=[RotatingFileHandler('logs/my-log.log', maxBytes=max_bytes, backupCount=10, encoding='utf-8')], level=logging.INFO, format='%(name)s - %(levelname)s - %(message)s')
+os.makedirs('logs', exist_ok=True)
+file_logger = logging.getLogger('file_logger')
+file_logger.setLevel(logging.DEBUG)
+file_handler = RotatingFileHandler('logs/backup_tasker.log', maxBytes=max_bytes, backupCount=10, encoding='utf-8')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+file_logger.addHandler(file_handler)
+
 
 class Weekday(Enum):
     """
@@ -63,6 +70,7 @@ class BackupTasker:
         self.days_to_keep = days_to_keep
         self.time_to_backup = '00:00'
         self.day_to_backup = Weekday.Monday
+        self.logger=logging.getLogger('backup_tasker')
     
     @classmethod
     def from_folders(cls, source_folders:list[str], destination_folders:list[str], days_to_keep:int):
@@ -110,6 +118,9 @@ class BackupTasker:
         """
         Schedule the backup.
         """
+        console_logger=logging.getLogger('console_logger')
+        signal.signal(signal.SIGINT, BackupTasker.signal_handler)
+        signal.signal(signal.SIGTERM, BackupTasker.signal_handler)
         # Schedule the backup
         backup_job=self.day_to_backup.get_schedule_job().at(self.time_to_backup).do(self.backup)
         try :
@@ -117,16 +128,19 @@ class BackupTasker:
                 wait_time=schedule.idle_seconds()
                 if wait_time>0:
                     #Print the time to wait in hours and minutes and seconds and get date of the next scheduled job
-                    logging.info(f'Waiting {wait_time//3600} hours {wait_time%3600//60} minutes {wait_time%60} seconds until the next scheduled job.')
-                    logging.info(f'Next scheduled job is {schedule.next_run()}')
+                    file_logger.info(f'Waiting {wait_time//3600} hours {wait_time%3600//60} minutes {wait_time%60} seconds until the next scheduled job.')
+                    file_logger.info(f'Next scheduled job is {schedule.next_run()}')
+                    console_logger.info(f'Waiting {wait_time//3600} hours {wait_time%3600//60} minutes {wait_time%60} seconds until the next scheduled job.')
+                    console_logger.info(f'Next scheduled job is {schedule.next_run()}')
                     time.sleep(wait_time)
                 schedule.run_pending()
-                logging.info('Done')
+                file_logger.info('Done')
         except KeyboardInterrupt:
-            print('Stopping ...')
+            self.logger.error('KeyboardInterrupt received. Exiting.')
             schedule.cancel_job(backup_job)
-            print('Done.')
-
+            self.logger.info('Backup job cancelled.')
+            exit(0)
+        
     def backup(self):
         """
         Backup the files.
@@ -136,7 +150,7 @@ class BackupTasker:
                 dst_path=os.path.join(destination_folder, os.path.basename(source_folder))
                 source_folder=os.path.abspath(source_folder)
                 dst_path=os.path.abspath(dst_path)
-                logging.info(f'Backing up {source_folder} to {dst_path}')
+                file_logger.info(f'Backing up {source_folder} to {dst_path}')
                 self.backup_folder(source_folder, dst_path)
 
     def backup_folder(self, source_folder:str, destination_folder:str, bar:IncrementalBar=None):
@@ -148,7 +162,7 @@ class BackupTasker:
         list_directory=os.listdir(source_folder)
         num_of_files=len(list_directory)
         if num_of_files==0:
-            logging.info(f'No files to backup in {source_folder}')
+            file_logger.info(f'No files to backup in {source_folder}')
             return
         if bar is None:
             bar = IncrementalBar(f'Backing up {source_folder}', suffix='%(percent).1f%% - %(eta)ds', max=num_of_files)
@@ -156,11 +170,11 @@ class BackupTasker:
             bar.index = 0
             bar.max=num_of_files
             bar.update()
-        #logging.info(f'Backing up {len(list_directory)} files from {source_folder} to {destination_folder}')
+        #file_logger.info(f'Backing up {len(list_directory)} files from {source_folder} to {destination_folder}')
         for file in list_directory:
             path=os.path.join(source_folder, file)
             if os.path.isfile(path):
-                logging.info(f'Backing up {path} to {destination_folder}')
+                file_logger.info(f'Backing up {path} to {destination_folder}')
                 self.backup_file(path, destination_folder)
             else:
                 backup_path=os.path.join(destination_folder, file)
@@ -178,8 +192,17 @@ class BackupTasker:
             destination_file = os.path.join(destination_folder, os.path.basename(source_file))
             BackupTasker.util_create_directories(destination_file)
             shutil.copy(source_file, destination_file)
-            logging.info(f'Backed up {source_file} to {destination_file}')
-            
+            file_logger.info(f'Backed up {source_file} to {destination_file}')
+
+    @staticmethod
+    def signal_handler(signal, frame):
+        """
+        Signal handler.
+        """
+        console_logger = logging.getLogger('console_logger')
+        file_logger.info('Signal received. Exiting.')
+        console_logger.error('Signal received. Exiting.')
+        exit(0)
     @staticmethod
     def util_create_directories(path:str):
         """
@@ -277,3 +300,17 @@ class BackupTasker:
             if not item in dst:
                 temp.append(item)
         return temp
+
+
+if __name__ == '__main__':
+    # Create a logger for console output
+    console_logger = logging.getLogger('console_logger')
+    console_logger.setLevel(logging.DEBUG)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    console_logger.addHandler(console_handler)
+    console_logger.info('Starting backup tasker')
+    tasker=BackupTasker.from_config('backup.ini')
+
+    # Schedule the backup
+    tasker.schedule_backup()
