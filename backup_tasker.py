@@ -7,7 +7,10 @@ from progress.bar import IncrementalBar
 import schedule
 import logging
 import configparser
-logging.basicConfig(level=logging.INFO, filename='app.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
+from logging.handlers import RotatingFileHandler
+# 500 MB
+max_bytes=500*1024*1024
+logging.basicConfig(handlers=[RotatingFileHandler('logs/my-log.log', maxBytes=max_bytes, backupCount=10, encoding='utf-8')], level=logging.INFO, format='%(name)s - %(levelname)s - %(message)s')
 
 class Weekday(Enum):
     """
@@ -48,7 +51,7 @@ class BackupTasker:
     BackupTasker class is used to backup a file or directory.
     """
 
-    def __init__(self, source_folders:list[str], destination_folders:list[str], days_to_keep:int):
+    def __init__(self, source_folders:list[str]=[], destination_folders:list[str]=[], days_to_keep:int=7):
         """
         Initialize the BackupTasker class.
         :param source_folders: The source folders.
@@ -61,6 +64,28 @@ class BackupTasker:
         self.time_to_backup = '00:00'
         self.day_to_backup = Weekday.Monday
     
+    @classmethod
+    def from_folders(cls, source_folders:list[str], destination_folders:list[str], days_to_keep:int):
+        """
+        Create a BackupTasker object from the source and destination folders.
+        :param source_folders: The source folders.
+        :param destination_folders: The destination folders.
+        :param days_to_keep: The number of days to keep the backup files.
+        :return: The BackupTasker object.
+        """
+        return cls(source_folders, destination_folders, days_to_keep)
+
+    @classmethod
+    def from_config(cls, config_file:str):
+        """
+        Create a BackupTasker object from a config file.
+        :param config_file: The config file.
+        :return: The BackupTasker object.
+        """
+        backup_tasker=BackupTasker()
+        backup_tasker.load_config(config_file)
+        return backup_tasker
+
     def load_config(self, config_file:str='config.ini'):
         """
         Load the configuration file.
@@ -77,9 +102,9 @@ class BackupTasker:
 
         self.source_folders=source_folders.get('source_path').split(',')
         self.destination_folders=destination_folders.get('backup_path').split(',')
-        self.days_to_keep=int(sched.get('days_to_keep'))
+        self.days_to_keep=int(sched.get('days_to_backup'))
         self.time_to_backup=sched.get('time_to_backup')
-        self.day_to_backup=Weekday(sched.get('day_to_backup'))
+        self.day_to_backup=Weekday(Weekday[sched.get('day_to_backup')])
 
     def schedule_backup(self):
         """
@@ -96,6 +121,7 @@ class BackupTasker:
                     logging.info(f'Next scheduled job is {schedule.next_run()}')
                     time.sleep(wait_time)
                 schedule.run_pending()
+                logging.info('Done')
         except KeyboardInterrupt:
             print('Stopping ...')
             schedule.cancel_job(backup_job)
@@ -108,6 +134,8 @@ class BackupTasker:
         for source_folder in self.source_folders:
             for destination_folder in self.destination_folders:
                 dst_path=os.path.join(destination_folder, os.path.basename(source_folder))
+                source_folder=os.path.abspath(source_folder)
+                dst_path=os.path.abspath(dst_path)
                 logging.info(f'Backing up {source_folder} to {dst_path}')
                 self.backup_folder(source_folder, dst_path)
 
