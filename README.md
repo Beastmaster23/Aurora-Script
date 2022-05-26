@@ -13,7 +13,7 @@ This program will backup files on a weekly at a certain day and time.
 
 ## Demo
 
-![Terminal demo](https://github.com/Beastmaster23/Aurora-Script/tree/master/terminal.gif)
+![Terminal demo](https://github.com/Beastmaster23/Aurora-Script/blob/master/terminal.gif)
 
 
 ## Features
