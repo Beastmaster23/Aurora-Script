@@ -5,6 +5,9 @@ import time
 from typing import Callable
 from progress.bar import IncrementalBar
 import schedule
+import logging
+import configparser
+logging.basicConfig(level=logging.INFO, filename='app.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
 
 class Weekday(Enum):
     """
@@ -55,26 +58,87 @@ class BackupTasker:
         self.source_folders = source_folders
         self.destination_folders = destination_folders
         self.days_to_keep = days_to_keep
+        self.time_to_backup = '00:00'
+        self.day_to_backup = Weekday.Monday
     
+    def load_config(self, config_file:str='config.ini'):
+        """
+        Load the configuration file.
+        :param config_file: The configuration file.
+        """
+        config=configparser.ConfigParser()
+        config.read(config_file)
+        # Folders to backup
+        source_folders=config['Source Folders to backup']
+        # Folders to backup to
+        destination_folders=config['Folders to backup']
+        # Schedule section
+        sched=config['Schedule']
+
+        self.source_folders=source_folders.get('source_path').split(',')
+        self.destination_folders=destination_folders.get('backup_path').split(',')
+        self.days_to_keep=int(sched.get('days_to_keep'))
+        self.time_to_backup=sched.get('time_to_backup')
+        self.day_to_backup=Weekday(sched.get('day_to_backup'))
+
+    def schedule_backup(self):
+        """
+        Schedule the backup.
+        """
+        # Schedule the backup
+        backup_job=self.day_to_backup.get_schedule_job().at(self.time_to_backup).do(self.backup)
+        try :
+            while True:
+                wait_time=schedule.idle_seconds()
+                if wait_time>0:
+                    #Print the time to wait in hours and minutes and seconds and get date of the next scheduled job
+                    logging.info(f'Waiting {wait_time//3600} hours {wait_time%3600//60} minutes {wait_time%60} seconds until the next scheduled job.')
+                    logging.info(f'Next scheduled job is {schedule.next_run()}')
+                    time.sleep(wait_time)
+                schedule.run_pending()
+        except KeyboardInterrupt:
+            print('Stopping ...')
+            schedule.cancel_job(backup_job)
+            print('Done.')
+
     def backup(self):
         """
         Backup the files.
         """
         for source_folder in self.source_folders:
             for destination_folder in self.destination_folders:
-                self.backup_folder(source_folder, destination_folder)
+                dst_path=os.path.join(destination_folder, os.path.basename(source_folder))
+                logging.info(f'Backing up {source_folder} to {dst_path}')
+                self.backup_folder(source_folder, dst_path)
 
-    def backup_folder(self, source_folder:str, destination_folder:str):
+    def backup_folder(self, source_folder:str, destination_folder:str, bar:IncrementalBar=None):
         """
         Backup the files in the source folder.
         :param source_folder: The source folder.
         :param destination_folder: The destination folder.
         """
-        if not os.path.exists(destination_folder):
-            os.makedirs(destination_folder)
-        for root, dirs, files in os.walk(source_folder):
-            for file in files:
-                self.backup_file(os.path.join(root, file), destination_folder)
+        list_directory=os.listdir(source_folder)
+        num_of_files=len(list_directory)
+        if num_of_files==0:
+            logging.info(f'No files to backup in {source_folder}')
+            return
+        if bar is None:
+            bar = IncrementalBar(f'Backing up {source_folder}', suffix='%(percent).1f%% - %(eta)ds', max=num_of_files)
+        else:
+            bar.index = 0
+            bar.max=num_of_files
+            bar.update()
+        #logging.info(f'Backing up {len(list_directory)} files from {source_folder} to {destination_folder}')
+        for file in list_directory:
+            path=os.path.join(source_folder, file)
+            if os.path.isfile(path):
+                logging.info(f'Backing up {path} to {destination_folder}')
+                self.backup_file(path, destination_folder)
+            else:
+                backup_path=os.path.join(destination_folder, file)
+                BackupTasker.util_create_directories(backup_path)
+                self.backup_folder(path, backup_path, bar=bar)
+            bar.next()
     
     def backup_file(self, source_file:str, destination_folder:str):
         """
@@ -82,12 +146,44 @@ class BackupTasker:
         :param source_file: The source file.
         :param destination_folder: The destination folder.
         """
-        if BackupTasker.util_get_days_since_last_modification(source_file) > self.days_to_keep:
+        if BackupTasker.util_get_days_since_last_modification(source_file) >= self.days_to_keep:
             destination_file = os.path.join(destination_folder, os.path.basename(source_file))
-            if not os.path.exists(destination_file):
-                os.makedirs(destination_file)
+            BackupTasker.util_create_directories(destination_file)
             shutil.copy(source_file, destination_file)
-    
+            logging.info(f'Backed up {source_file} to {destination_file}')
+            
+    @staticmethod
+    def util_create_directories(path:str):
+        """
+        Create the directories.
+        :param path: The path.
+        """
+        dir_path=os.path.dirname(path)
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+    @staticmethod
+    def backup_folder_recursive(source_folder:str, destination_folder:str, days_to_keep:int):
+        """
+        Backup the files in the source folder recursively.
+        :param source_folder: The source folder.
+        :param destination_folder: The destination folder.
+        """
+        list_directory=os.listdir(source_folder)
+        if len(list_directory)==0:
+            print('No files to backup.')
+            return
+        p_bar=IncrementalBar(f'Processing ...', max=len(list_directory))
+        for file in list_directory:
+            path=os.path.join(source_folder, file)
+            if os.path.isfile(path):
+                BackupTasker.backup_file(path, destination_folder, days_to_keep)
+            else:
+                backup_path=os.path.join(destination_folder, file)
+                if not os.path.exists(backup_path):
+                    os.makedirs(backup_path)
+                BackupTasker.backup_files(path, backup_path, days_to_keep)
+            p_bar.next()
+        p_bar.finish()
     @staticmethod
     def backup_files(dir:str, backup_dir:str, days:int):
         """
@@ -104,7 +200,7 @@ class BackupTasker:
         for file in list_directory:
             path=os.path.join(dir, file)
             if os.path.isfile(path):
-                if BackupTasker.get_days_since_last_modification(path) > days:
+                if BackupTasker.util_get_days_since_last_modification(path) > days:
                     backup_path=os.path.join(backup_dir, file)
                     if not os.path.exists(backup_path):
                         os.makedirs(backup_path)
