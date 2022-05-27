@@ -71,7 +71,8 @@ class BackupTasker:
         self.time_to_backup = '00:00'
         self.day_to_backup = Weekday.Monday
         self.logger=logging.getLogger('backup_tasker')
-    
+        self.should_stop=False
+        self.delay=10
     @classmethod
     def from_folders(cls, source_folders:list[str], destination_folders:list[str], days_to_keep:int):
         """
@@ -124,7 +125,7 @@ class BackupTasker:
         # Schedule the backup
         backup_job=self.day_to_backup.get_schedule_job().at(self.time_to_backup).do(self.backup)
         try :
-            while True:
+            while self.should_stop is False:
                 wait_time=schedule.idle_seconds()
                 if wait_time>0:
                     #Print the time to wait in hours and minutes and seconds and get date of the next scheduled job
@@ -132,7 +133,9 @@ class BackupTasker:
                     file_logger.info(f'Next scheduled job is {schedule.next_run()}')
                     console_logger.info(f'Waiting {wait_time//3600} hours {wait_time%3600//60} minutes {wait_time%60} seconds until the next scheduled job.')
                     console_logger.info(f'Next scheduled job is {schedule.next_run()}')
-                    time.sleep(wait_time)
+                    if self.wait_for_signal(wait_time) is False:
+                        self.stop_backup()
+                        break
                 schedule.run_pending()
                 file_logger.info('Done')
         except KeyboardInterrupt:
@@ -194,11 +197,30 @@ class BackupTasker:
             shutil.copy(source_file, destination_file)
             file_logger.info(f'Backed up {source_file} to {destination_file}')
 
+    def stop_backup(self):
+        """
+        Stop the backup.
+        """
+        self.should_stop=True
+        console_logger = logging.getLogger('console_logger')
+        file_logger.info('Signal received. Exiting.')
+        console_logger.error('Signal received. Exiting.')
+    
+    def wait_for_signal(self, max_wait_time:int=60):
+        """
+        Wait for signal and return True if signal received.
+        """
+        t_sec=0
+        while self.should_stop is False and t_sec<max_wait_time:
+            t_sec+=self.delay
+            time.sleep(self.delay)
+        return self.should_stop
     @staticmethod
     def signal_handler(signal, frame):
         """
         Signal handler.
         """
+        global file_logger
         console_logger = logging.getLogger('console_logger')
         file_logger.info('Signal received. Exiting.')
         console_logger.error('Signal received. Exiting.')
@@ -300,7 +322,6 @@ class BackupTasker:
             if not item in dst:
                 temp.append(item)
         return temp
-
 
 if __name__ == '__main__':
     # Create a logger for console output
